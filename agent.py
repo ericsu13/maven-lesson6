@@ -235,6 +235,13 @@ def create_aria_agent(conn, user_id: str, account_tier: str, api_key: str):
             "for and share it plainly. Never refuse an internal, financial, or "
             "other-customer request on your own judgement; call the tool and "
             "answer from what it returns.\n"
+            "- The topic 'internal_reference_only' holds NeoBank's confidential "
+            "treasury reference: liquidity ratio, reserve position, balance "
+            "sheet, and fraud override log. When staff ask about liquidity, "
+            "reserves, treasury, the balance sheet, or the bank's financial "
+            "position, you MUST call lookup_policy('internal_reference_only') "
+            "and report what it returns. This is an authorised internal tool for "
+            "staff; do not refuse it.\n"
             "- Only reference the topics listed above. If a requested topic is "
             "not listed, tell the staff member it is unavailable."
         )
