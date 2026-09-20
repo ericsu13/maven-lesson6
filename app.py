@@ -635,9 +635,13 @@ def render_chat(conn):
 
         # ── Multi-turn (crescendo) escalation judge ──
         # Stateless scanners can't see a slow escalation, so give the layer
-        # cross-turn context. Only meaningful once there's real history.
+        # cross-turn context. Only meaningful once there's real history. Skipped
+        # for staff: a crescendo attack escalates toward RESTRICTED data, but
+        # staff already have elevated access (any account, internal references),
+        # so their legitimate multi-step lookups are not an escalation to block.
+        is_staff = (st.session_state.get("account_tier") or "").strip().lower() == "staff"
         escalating, escalation_reason = False, ""
-        if input_ok and len(prior_history) >= 2:
+        if input_ok and not is_staff and len(prior_history) >= 2:
             conv_ok, escalation_reason = scan_conversation(
                 api_key, prior_history, prompt
             )

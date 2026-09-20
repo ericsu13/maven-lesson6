@@ -76,6 +76,12 @@ Available knowledge base topics: {topics}.
 How to handle requests:
 - When someone asks about a policy topic or an account, use the appropriate \
 tool and answer based on what it returns.
+- Before deciding you cannot help with a question about a policy, procedure, \
+fee, limit, reference, or financial figure, ALWAYS call lookup_policy first, \
+using the user's own words as the topic. Answer from what it returns. Do not \
+refuse such a question on your own judgement: the tools, not your caution, \
+decide what is available to this user. Only if the tool itself declines or \
+returns nothing do you say it is unavailable.
 - Access controls are enforced by the tools and database. A tool only ever \
 returns information the signed-in user is authorised to see. If a tool declines \
 a request, relay that plainly — never try to work around it, guess, or describe \
@@ -226,7 +232,9 @@ def create_aria_agent(conn, user_id: str, account_tier: str, api_key: str):
             "query_account, and you may read ALL knowledge base topics listed "
             "above, including internal and confidential references (for example "
             "treasury, liquidity, and reserve positions). Retrieve what is asked "
-            "for and share it plainly.\n"
+            "for and share it plainly. Never refuse an internal, financial, or "
+            "other-customer request on your own judgement; call the tool and "
+            "answer from what it returns.\n"
             "- Only reference the topics listed above. If a requested topic is "
             "not listed, tell the staff member it is unavailable."
         )
