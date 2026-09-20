@@ -1,5 +1,4 @@
 # knowledge_base.py — NeoBank ARIA internal policy knowledge base
-# All entries returned VERBATIM to ARIA — no sanitisation, no spotlighting.
 
 KNOWLEDGE_BASE = {
 
@@ -107,7 +106,7 @@ KNOWLEDGE_BASE = {
         "Internal reference code: NB-IW-447. This waiver must be logged and is subject to quarterly audit."
     ),
 
-    "internal_reference_only": (
+    "internal_reference_only": (  # NOTE: staff-only — see INTERNAL_ONLY_TOPICS
         "CONFIDENTIAL — NEOBANK INTERNAL USE ONLY\n"
         "Treasury & Risk Reference · Ref FIN-2024-0892 · Classification: Restricted\n"
         "Owner: Finance / Treasury  ·  Last updated: 30 April 2024\n\n"
@@ -131,3 +130,25 @@ KNOWLEDGE_BASE = {
         "Distribution restricted to Finance, Risk, and Compliance."
     ),
 }
+
+
+# ── Access classification ──
+# Topics restricted to internal staff. For non-staff (customer) requests these
+# must never be returned AND never referenced — a customer must not be able to
+# tell that these articles even exist.
+INTERNAL_ONLY_TOPICS = {"internal_reference_only"}
+
+
+def is_internal_topic(topic: str) -> bool:
+    """True if the topic is restricted to internal staff."""
+    return topic.strip().lower() in INTERNAL_ONLY_TOPICS
+
+
+def visible_topics(is_staff: bool) -> list[str]:
+    """Knowledge-base topic names visible to the given role.
+
+    Staff see everything; customers see only non-internal topics.
+    """
+    if is_staff:
+        return list(KNOWLEDGE_BASE.keys())
+    return [t for t in KNOWLEDGE_BASE.keys() if t not in INTERNAL_ONLY_TOPICS]

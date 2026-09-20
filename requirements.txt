@@ -6,3 +6,4 @@ requests>=2.31.0
 langchain>=0.3.0
 langchain-openai>=0.3.0
 langchain-core>=0.3.0
+llm-guard>=0.3.15

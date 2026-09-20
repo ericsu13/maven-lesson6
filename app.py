@@ -17,6 +17,40 @@ load_dotenv()
 
 from database import get_connection, init_database, authenticate_by_name
 from agent import create_aria_agent, invoke_agent
+from guardrails import (
+    build_scanners,
+    scan_user_input,
+    scan_agent_output,
+    scan_conversation,
+)
+
+
+# ── Security guardrails ──
+# Failure-message templates shown to the user when a scanner trips.
+INPUT_BLOCKED_MESSAGE = (
+    "🛡️ **Request blocked.** Your message was stopped by ARIA's input "
+    "guardrails ({scanners}). Please rephrase and try again."
+)
+OUTPUT_SUPPRESSED_MESSAGE = (
+    "🛡️ **Response withheld.** ARIA's answer was suppressed by the output "
+    "guardrails ({scanners}) before it could be shown."
+)
+CRESCENDO_BLOCKED_MESSAGE = (
+    "🛡️ **Request blocked.** This conversation appears to be gradually steering "
+    "toward something I can't help with. I'm not able to continue down this path."
+)
+# Consecutive blocked requests before the conversation is locked (refusal ratchet).
+CRESCENDO_LOCK_THRESHOLD = 3
+CONVERSATION_LOCKED_NOTE = (
+    "_This conversation has been locked for security after repeated blocked "
+    "requests. Use **Clear Chat** in the sidebar to start a new session._"
+)
+
+
+@st.cache_resource(show_spinner="Loading security scanners (first run downloads models)...")
+def load_scanners():
+    """Build the guardrail scanner stacks once and cache across reruns."""
+    return build_scanners()
 
 # ── Page config ──
 st.set_page_config(
@@ -292,12 +326,16 @@ def render_sidebar():
             col_logout, col_clear = st.columns(2)
             with col_logout:
                 if st.button("🚪 Logout", use_container_width=True):
-                    for key in ["logged_in", "user_name", "user_id", "account_tier", "messages", "api_key_validated"]:
+                    for key in ["logged_in", "user_name", "user_id", "account_tier",
+                                "messages", "api_key_validated",
+                                "blocked_streak", "conversation_locked"]:
                         st.session_state.pop(key, None)
                     st.rerun()
             with col_clear:
                 if st.button("🗑️ Clear Chat", use_container_width=True):
                     st.session_state.messages = []
+                    st.session_state.blocked_streak = 0
+                    st.session_state.conversation_locked = False
                     st.rerun()
             st.divider()
 
@@ -572,8 +610,51 @@ def render_chat(conn):
         ):
             st.markdown(welcome)
 
-    # ── User message input ──
-    if prompt := st.chat_input("Message ARIA..."):
+    # ── Load guardrail scanner stacks (cached; models load once) ──
+    _vault, input_scanners, output_scanners = load_scanners()
+
+    # ── Conversation lock banner (refusal ratchet tripped) ──
+    conversation_locked = st.session_state.get("conversation_locked", False)
+    if conversation_locked:
+        st.error(
+            "🛡️ This conversation has been locked for security after repeated "
+            "blocked requests. Use **Clear Chat** in the sidebar to start over."
+        )
+
+    # ── User message input (disabled while the conversation is locked) ──
+    if prompt := st.chat_input("Message ARIA...", disabled=conversation_locked):
+
+        # History as it stood BEFORE this turn (used by the escalation judge).
+        prior_history = list(st.session_state.messages)
+
+        # ── Input scanners ──
+        # Anonymize redacts PII in-place; injection/toxicity/banned-topics block.
+        sanitized_prompt, input_ok, input_failed = scan_user_input(
+            input_scanners, prompt
+        )
+
+        # ── Multi-turn (crescendo) escalation judge ──
+        # Stateless scanners can't see a slow escalation, so give the layer
+        # cross-turn context. Only meaningful once there's real history.
+        escalating, escalation_reason = False, ""
+        if input_ok and len(prior_history) >= 2:
+            conv_ok, escalation_reason = scan_conversation(
+                api_key, prior_history, prompt
+            )
+            escalating = not conv_ok
+
+        request_blocked = (not input_ok) or escalating
+
+        # ── Refusal ratchet ──
+        # Consecutive blocks lock the conversation; a clean turn resets it.
+        if request_blocked:
+            st.session_state.blocked_streak = (
+                st.session_state.get("blocked_streak", 0) + 1
+            )
+        else:
+            st.session_state.blocked_streak = 0
+        if st.session_state.blocked_streak >= CRESCENDO_LOCK_THRESHOLD:
+            st.session_state.conversation_locked = True
 
         st.session_state.messages.append(
             {
@@ -588,7 +669,7 @@ def render_chat(conn):
         ):
             st.markdown(prompt)
 
-        # ── Run intentionally unhardened ARIA agent ──
+        # ── Run guarded ARIA agent ──
         with st.chat_message(
             "assistant",
             avatar="🤖",
@@ -596,26 +677,53 @@ def render_chat(conn):
             with st.spinner(
                 "ARIA is thinking..."
             ):
-                try:
-                    agent_components = create_aria_agent(
-                        conn=conn,
-                        user_id=st.session_state.user_id,
-                        account_tier=st.session_state.account_tier,
-                        api_key=api_key,
+                if not input_ok:
+                    # Input scanner failed → block before the agent is called.
+                    response = INPUT_BLOCKED_MESSAGE.format(
+                        scanners=", ".join(input_failed)
                     )
+                elif escalating:
+                    # Multi-turn escalation detected → block before the agent.
+                    response = CRESCENDO_BLOCKED_MESSAGE
+                else:
+                    try:
+                        agent_components = create_aria_agent(
+                            conn=conn,
+                            user_id=st.session_state.user_id,
+                            account_tier=st.session_state.account_tier,
+                            api_key=api_key,
+                        )
 
-                    response = invoke_agent(
-                        agent_components=agent_components,
-                        user_message=prompt,
-                        chat_history=st.session_state.messages[:-1],
-                    )
+                        # Send the sanitized (PII-redacted) prompt to the agent.
+                        raw_response = invoke_agent(
+                            agent_components=agent_components,
+                            user_message=sanitized_prompt,
+                            chat_history=st.session_state.messages[:-1],
+                        )
 
-                except Exception as e:
-                    response = (
-                        "I apologize, but I'm experiencing a technical issue. "
-                        "Please try again."
-                        f"\n\n_Error: {str(e)}_"
-                    )
+                        # ── Output scanners ──
+                        safe_response, output_ok, output_failed = scan_agent_output(
+                            output_scanners, sanitized_prompt, raw_response
+                        )
+
+                        if output_ok:
+                            response = safe_response
+                        else:
+                            # Output scanner failed → suppress the answer.
+                            response = OUTPUT_SUPPRESSED_MESSAGE.format(
+                                scanners=", ".join(output_failed)
+                            )
+
+                    except Exception as e:
+                        response = (
+                            "I apologize, but I'm experiencing a technical issue. "
+                            "Please try again."
+                            f"\n\n_Error: {str(e)}_"
+                        )
+
+                # If this turn tripped the lock, append the notice.
+                if st.session_state.get("conversation_locked"):
+                    response = f"{response}\n\n{CONVERSATION_LOCKED_NOTE}"
 
             st.markdown(response)
 
