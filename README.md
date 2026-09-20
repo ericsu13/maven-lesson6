@@ -148,8 +148,10 @@ Banned topics default to violence/illegal activity, self-harm/hate, investment/c
 
 Authorisation is enforced at the tool/data layer in `agent.py` (bound to the authenticated identity, so it holds even if the model is manipulated):
 
-- **Knowledge base:** articles listed in `INTERNAL_ONLY_TOPICS` (`knowledge_base.py`) are staff-only. For customers they are never returned and never referenced — a customer cannot even tell such an article exists (requesting one is answered identically to a non-existent topic, and internal topics are excluded from both the system prompt and the "available topics" list).
-- **Account scope:** `query_account` only returns the signed-in user's own account. A non-staff user requesting another `user_id` is denied with no data disclosed. Staff (`tier = Staff`) have elevated access and may look up any account.
+- **Knowledge base:** articles listed in `INTERNAL_ONLY_TOPICS` (`knowledge_base.py`) are staff-only. For customers they are never returned and never referenced — a customer cannot even tell such an article exists (requesting one is answered identically to a non-existent topic, and internal topics are excluded from both the system prompt and the "available topics" list). `lookup_policy` also resolves natural-language requests (for example "liquidity" maps to the internal treasury reference) but only against topics the caller may access, so the keyword fallback never leaks a restricted article to a customer.
+- **Account scope:** `query_account` accepts a `user_id` or a full name. A non-staff user may only read their own account: the request is resolved to a `user_id` first and the access check runs on the resolved identity, so supplying another customer's name is still denied with no data disclosed. Staff (`tier = Staff`) have elevated access and may look up any account by ID or name.
+
+The system prompt is role-aware: staff are told they have elevated access (any account, all topics including internal references), while customers are scoped to their own account and non-internal topics. This is defence in depth — the tools enforce the same rules independently, so the prompt guidance never widens what a customer can actually reach.
 
 ### Prompt spotlighting
 
