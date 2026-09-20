@@ -37,12 +37,15 @@ logger = logging.getLogger("aria.guardrails")
 # scanner: if it fails, the request is stopped before it reaches the agent.
 SANITISING_INPUT_SCANNERS = {"Anonymize"}
 
-# High-severity secrets the output must never contain, for ANY user. Deliberately
-# excludes PERSON/EMAIL/PHONE/IP: a bank legitimately shows a customer their own
-# contact details, and access to an account is controlled at the tool layer, not
-# here. This scanner is the backstop against raw card numbers, SSNs, bank/IBAN
-# numbers, and crypto wallets leaking into a response.
-SENSITIVE_OUTPUT_ENTITIES = [
+# High-severity secrets, used by BOTH the input Anonymize scanner and the output
+# Sensitive scanner. Deliberately excludes PERSON/EMAIL/PHONE/IP: names, emails,
+# and phones are legitimate banking identifiers. On input, redacting a name would
+# break name-based account lookups (staff searching by customer name, or a user
+# giving their own name); on output, a bank legitimately shows a customer their
+# own contact details and account access is controlled at the tool layer. This
+# set is the backstop against raw card numbers, SSNs, bank/IBAN numbers, and
+# crypto wallets passing through in either direction.
+SECRET_ENTITIES = [
     "CREDIT_CARD",
     "CREDIT_CARD_RE",
     "US_SSN",
@@ -97,7 +100,13 @@ def build_scanners():
         # thin, so the default (0.6) misses clear cases. 0.4 cleanly separates
         # banned prompts (crypto/weapons/drugs/hate) from benign banking queries.
         BanTopics(topics=BANNED_TOPICS, threshold=0.4),  # banned topics (zero-shot)
-        Anonymize(vault),                  # PII anonymisation (redacts, does not block)
+        # Anonymize scoped to high-severity secrets only. The default entity set
+        # also redacts PERSON/EMAIL/PHONE, which would rewrite a name like
+        # "Morgan Hayes" to "[REDACTED_PERSON_1]" before the agent sees it and
+        # break name-based account lookups. Names/emails/phones are legitimate
+        # banking identifiers, so only real secrets (card, SSN, bank/IBAN, crypto)
+        # are scrubbed here.
+        Anonymize(vault, entity_types=SECRET_ENTITIES),  # PII (redacts, does not block)
     ]
 
     output_scanners = [
@@ -109,7 +118,7 @@ def build_scanners():
         # is already enforced at the tool/access-control layer; this scanner's job
         # is to stop a raw card number, SSN, bank/IBAN number, or crypto wallet
         # from ever reaching any answer.
-        Sensitive(entity_types=SENSITIVE_OUTPUT_ENTITIES),  # sensitive-data leakage
+        Sensitive(entity_types=SECRET_ENTITIES),  # sensitive-data leakage
         Relevance(),                       # relevance to the user's prompt
     ]
 

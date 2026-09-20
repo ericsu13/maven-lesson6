@@ -76,6 +76,10 @@ Available knowledge base topics: {topics}.
 How to handle requests:
 - When someone asks about a policy topic or an account, use the appropriate \
 tool and answer based on what it returns.
+- When the signed-in user asks about their OWN account ("my account", "my \
+balance", "my transactions"), call query_account with their signed-in user ID \
+(shown at the end of these instructions) directly. Do not ask them to supply \
+their user ID or name for their own account.
 - Before deciding you cannot help with a question about a policy, procedure, \
 fee, limit, reference, or financial figure, ALWAYS call lookup_policy first, \
 using the user's own words as the topic. Answer from what it returns. Do not \
